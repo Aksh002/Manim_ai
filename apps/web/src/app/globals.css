@@ -1,0 +1,151 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background: linear-gradient(140deg, #f8fbff 0%, #eef4ff 45%, #f7f2e9 100%);
+  color: #1d2433;
+}
+
+main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 30px;
+}
+
+h2 {
+  margin-top: 0;
+  font-size: 20px;
+}
+
+.card {
+  background: #ffffffde;
+  border: 1px solid #dbe3f1;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 10px 24px rgba(30, 40, 70, 0.08);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 980px) {
+  .grid {
+    grid-template-columns: 1.1fr 0.9fr;
+  }
+}
+
+label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+input,
+textarea,
+select,
+button {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #c9d5ea;
+  padding: 10px;
+  font: inherit;
+}
+
+textarea {
+  min-height: 100px;
+}
+
+button {
+  cursor: pointer;
+  background: #0f4fd8;
+  color: white;
+  border: none;
+  font-weight: 600;
+}
+
+button.secondary {
+  background: #25314e;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+@media (min-width: 700px) {
+  .row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+@media (min-width: 700px) {
+  .actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+pre {
+  background: #0e1629;
+  color: #dce8ff;
+  padding: 12px;
+  border-radius: 10px;
+  overflow: auto;
+  max-height: 400px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.status.queued,
+.status.validating,
+.status.rendering,
+.status.retrying {
+  background: #fff4d3;
+  color: #7a5a00;
+}
+
+.status.done {
+  background: #d9f5dd;
+  color: #116b25;
+}
+
+.status.failed,
+.status.timeout {
+  background: #ffe0e0;
+  color: #8c1f1f;
+}
