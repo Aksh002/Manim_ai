@@ -1,0 +1,32 @@
+import time
+from collections import defaultdict, deque
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from app.core.config import get_settings
+
+
+class SimpleRateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app):
+        super().__init__(app)
+        self.hits: dict[str, deque[float]] = defaultdict(deque)
+
+    async def dispatch(self, request: Request, call_next):
+        settings = get_settings()
+        if request.url.path.startswith("/health"):
+            return await call_next(request)
+
+        key = request.client.host if request.client else "unknown"
+        now = time.time()
+        q = self.hits[key]
+
+        while q and now - q[0] > 60:
+            q.popleft()
+
+        if len(q) >= settings.rate_limit_per_min:
+            return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+
+        q.append(now)
+        return await call_next(request)
