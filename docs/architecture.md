@@ -14,7 +14,7 @@
 [Next.js UI]
    |  POST /generate
    v
-[FastAPI API] --(Ollama API)-> [deepseek-coder:6.7b]
+[FastAPI API] --(LLM Provider: HF/Ollama/OpenAI)-> [Code Model]
    |  returns manim code
    |  POST /render
    v
