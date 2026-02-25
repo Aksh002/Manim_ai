@@ -1,5 +1,6 @@
 import logging
 import re
+from typing import Any
 
 import httpx
 from openai import BadRequestError, OpenAI
@@ -16,15 +17,26 @@ class LLMService:
         self.settings = get_settings()
         self.provider = self.settings.llm_provider.strip().lower()
         self.openai_client = OpenAI(api_key=self.settings.openai_api_key) if self.settings.openai_api_key else None
+        self.hf_router_client = (
+            OpenAI(
+                base_url=self.settings.hf_router_base_url.rstrip("/"),
+                api_key=self.settings.hf_api_token,
+            )
+            if self.settings.hf_api_token
+            else None
+        )
         self.ollama_client = httpx.Client(
             base_url=self.settings.ollama_base_url.rstrip("/"),
             timeout=self.settings.llm_request_timeout_sec,
         )
+        self.hf_client = httpx.Client(timeout=self.settings.llm_request_timeout_sec)
 
     @property
     def model_name(self) -> str:
         if self.provider == "ollama":
             return self.settings.ollama_model
+        if self.provider in {"hf_endpoint", "hf_router"}:
+            return self.settings.hf_model_id or self.settings.hf_endpoint_url
         return self.settings.openai_model
 
     def _extract_code(self, text: str) -> str:
@@ -54,7 +66,9 @@ class GeneratedScene(Scene):
             payload["options"] = {"temperature": temperature}
 
         response = self.ollama_client.post("/api/generate", json=payload)
-        response.raise_for_status()
+        if response.is_error:
+            detail = response.text.strip()
+            raise RuntimeError(f"Ollama error {response.status_code}: {detail}")
         body = response.json()
         text = body.get("response", "")
         if not isinstance(text, str) or not text.strip():
@@ -84,9 +98,105 @@ class GeneratedScene(Scene):
 
         return response.output_text
 
+    def _extract_hf_text(self, body: Any, prompt: str) -> str:
+        text = ""
+
+        if isinstance(body, list) and body:
+            first = body[0]
+            if isinstance(first, dict):
+                text = str(first.get("generated_text") or first.get("text") or "")
+
+        elif isinstance(body, dict):
+            if "error" in body:
+                raise RuntimeError(f"HF endpoint error: {body['error']}")
+
+            text = str(body.get("generated_text") or body.get("output_text") or body.get("text") or "")
+            if not text and isinstance(body.get("choices"), list) and body["choices"]:
+                choice = body["choices"][0]
+                if isinstance(choice, dict):
+                    message = choice.get("message")
+                    if isinstance(message, dict) and isinstance(message.get("content"), str):
+                        text = message["content"]
+                    elif isinstance(choice.get("text"), str):
+                        text = choice["text"]
+            if not text and isinstance(body.get("results"), list) and body["results"]:
+                first = body["results"][0]
+                if isinstance(first, dict):
+                    text = str(first.get("generated_text") or first.get("text") or "")
+
+        if text.startswith(prompt):
+            text = text[len(prompt) :]
+        text = text.strip()
+        if not text:
+            raise RuntimeError("HF endpoint returned empty response")
+        return text
+
+    def _hf_generate(self, prompt: str, temperature: float | None = None) -> str:
+        endpoint_url = self.settings.hf_endpoint_url.strip()
+        if not endpoint_url:
+            raise RuntimeError("HF_ENDPOINT_URL is not configured")
+
+        headers = {"Content-Type": "application/json"}
+        if self.settings.hf_api_token:
+            headers["Authorization"] = f"Bearer {self.settings.hf_api_token}"
+
+        parameters: dict[str, object] = {
+            "max_new_tokens": self.settings.hf_max_new_tokens,
+            "return_full_text": False,
+        }
+        if temperature is not None:
+            parameters["temperature"] = temperature
+
+        payload = {
+            "inputs": prompt,
+            "parameters": parameters,
+            "options": {"wait_for_model": True},
+        }
+
+        response = self.hf_client.post(endpoint_url, json=payload, headers=headers)
+        if response.is_error:
+            detail = response.text.strip()
+            raise RuntimeError(f"HF endpoint error {response.status_code}: {detail}")
+        return self._extract_hf_text(response.json(), prompt)
+
+    def _hf_router_generate(self, prompt: str, temperature: float | None = None) -> str:
+        if not self.hf_router_client:
+            raise RuntimeError("HF_API_TOKEN is not configured for hf_router provider")
+
+        payload: dict[str, object] = {
+            "model": self.settings.hf_model_id,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": self.settings.hf_max_new_tokens,
+        }
+        if temperature is not None:
+            payload["temperature"] = temperature
+
+        completion = self.hf_router_client.chat.completions.create(**payload)
+        if not completion.choices:
+            raise RuntimeError("HF router returned no choices")
+
+        message = completion.choices[0].message
+        content = message.content
+        if isinstance(content, list):
+            collected: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+                    if isinstance(text, str):
+                        collected.append(text)
+            content = "\n".join(collected).strip()
+
+        if not isinstance(content, str) or not content.strip():
+            raise RuntimeError("HF router returned empty message content")
+        return content
+
     def _generate(self, prompt: str, temperature: float | None = None) -> str:
         if self.provider == "ollama":
             return self._ollama_generate(prompt=prompt, temperature=temperature)
+        if self.provider == "hf_endpoint":
+            return self._hf_generate(prompt=prompt, temperature=temperature)
+        if self.provider == "hf_router":
+            return self._hf_router_generate(prompt=prompt, temperature=temperature)
         if self.provider == "openai":
             return self._openai_generate(prompt=prompt, temperature=temperature)
         raise RuntimeError(f"Unsupported LLM_PROVIDER: {self.provider}")
@@ -98,7 +208,12 @@ class GeneratedScene(Scene):
             return self._extract_code(raw), []
         except Exception as exc:
             logger.warning("Primary LLM generation failed, using fallback template: %s", exc)
-            return self._fallback_code(payload.topic), [f"LLM unavailable ({self.provider}), using fallback template"]
+            message = str(exc).strip()
+            if len(message) > 260:
+                message = f"{message[:260]}..."
+            return self._fallback_code(payload.topic), [
+                f"LLM unavailable ({self.provider}): {message}. Using fallback template"
+            ]
 
     def fix_code(self, code: str, error: str) -> str:
         prompt = f"""
@@ -108,6 +223,10 @@ Constraints:
 - Use only `from manim import *`.
 - No unsafe imports or system/file/network calls.
 - Return code only.
+- Do not call undefined/private methods on `self` (for example `_set_background`, `_add_area`).
+- Do not invent methods like `play_and_wait`; use valid Scene APIs such as `play(...)` and `wait(...)`.
+- If you need helper methods, define them explicitly in `GeneratedScene`.
+- Ensure final code can render directly with `manim ... GeneratedScene`.
 
 Runtime error:
 {error}

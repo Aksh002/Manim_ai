@@ -14,6 +14,22 @@ FORBIDDEN_IMPORTS = {
 }
 
 FORBIDDEN_CALLS = {"eval", "exec", "open", "__import__", "compile", "input"}
+KNOWN_SCENE_METHODS = {
+    "add",
+    "remove",
+    "clear",
+    "play",
+    "wait",
+    "next_section",
+    "add_sound",
+    "add_foreground_mobject",
+    "remove_foreground_mobject",
+    "bring_to_front",
+    "bring_to_back",
+    "add_fixed_in_frame_mobjects",
+    "remove_fixed_in_frame_mobjects",
+    "add_fixed_orientation_mobjects",
+}
 
 
 @dataclass
@@ -25,6 +41,12 @@ class ValidationResult:
 class CodeValidator:
     def validate(self, code: str) -> ValidationResult:
         errors: list[str] = []
+        seen_errors: set[str] = set()
+
+        def add_error(message: str) -> None:
+            if message not in seen_errors:
+                seen_errors.add(message)
+                errors.append(message)
 
         if len(code.encode("utf-8")) > 100_000:
             errors.append("Code exceeds max size 100KB")
@@ -43,13 +65,13 @@ class CodeValidator:
                 if node.module == "manim":
                     has_required_import = True
                 elif node.module and node.module.split(".")[0] in FORBIDDEN_IMPORTS:
-                    errors.append(f"Forbidden import from: {node.module}")
+                    add_error(f"Forbidden import from: {node.module}")
 
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     root = alias.name.split(".")[0]
                     if root in FORBIDDEN_IMPORTS:
-                        errors.append(f"Forbidden import: {alias.name}")
+                        add_error(f"Forbidden import: {alias.name}")
 
             if isinstance(node, ast.Call):
                 fn_name = None
@@ -58,21 +80,53 @@ class CodeValidator:
                 elif isinstance(node.func, ast.Attribute):
                     fn_name = node.func.attr
                 if fn_name in FORBIDDEN_CALLS:
-                    errors.append(f"Forbidden call: {fn_name}")
+                    add_error(f"Forbidden call: {fn_name}")
 
             if isinstance(node, ast.ClassDef) and node.name == "GeneratedScene":
                 for base in node.bases:
                     if isinstance(base, ast.Name) and base.id == "Scene":
                         has_scene = True
+
+                defined_methods = {
+                    child.name for child in node.body if isinstance(child, ast.FunctionDef)
+                }
                 for child in node.body:
                     if isinstance(child, ast.FunctionDef) and child.name == "construct":
                         has_construct = True
 
+                for class_node in ast.walk(node):
+                    if not isinstance(class_node, ast.Call):
+                        continue
+                    if not isinstance(class_node.func, ast.Attribute):
+                        continue
+                    if not isinstance(class_node.func.value, ast.Name):
+                        continue
+                    if class_node.func.value.id != "self":
+                        continue
+
+                    method_name = class_node.func.attr
+                    if method_name in defined_methods:
+                        continue
+                    if method_name in KNOWN_SCENE_METHODS:
+                        continue
+
+                    line = getattr(class_node, "lineno", "?")
+                    if method_name.startswith("_"):
+                        add_error(
+                            f"Undefined private method on self at line {line}: self.{method_name}(...). "
+                            "Do not invent private Scene helpers unless defined in class."
+                        )
+                    else:
+                        add_error(
+                            f"Unknown Scene method at line {line}: self.{method_name}(...). "
+                            "Use valid Manim Scene APIs or define the helper method in class."
+                        )
+
         if not has_required_import:
-            errors.append("Missing required import: from manim import *")
+            add_error("Missing required import: from manim import *")
         if not has_scene:
-            errors.append("Missing required class: GeneratedScene(Scene)")
+            add_error("Missing required class: GeneratedScene(Scene)")
         if not has_construct:
-            errors.append("Missing required method: construct(self)")
+            add_error("Missing required method: construct(self)")
 
         return ValidationResult(ok=not errors, errors=errors)

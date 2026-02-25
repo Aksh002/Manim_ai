@@ -23,10 +23,10 @@ def render(
     cache_service: CacheService = Depends(get_cache_service),
 ):
     validation = validator.validate(payload.code)
-    if not validation.ok:
+    if not validation.ok and not payload.retry_on_error:
         raise HTTPException(status_code=400, detail={"errors": validation.errors})
 
-    render_hash = cache_service.hash_text(f"{payload.quality}:{payload.code}")
+    render_hash = cache_service.hash_text(f"render:v2:{payload.quality}:{payload.code}")
     cached_job_id = cache_service.get_render_job(render_hash)
     if cached_job_id:
         cached_video = storage_service.get(cached_job_id)

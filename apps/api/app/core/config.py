@@ -7,13 +7,19 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "Manim AI API"
-    llm_provider: str = "ollama"
+    llm_provider: str = "hf_router"
     llm_request_timeout_sec: int = 120
+
+    hf_router_base_url: str = "https://router.huggingface.co/v1"
+    hf_endpoint_url: str = ""
+    hf_api_token: str = ""
+    hf_model_id: str = "Qwen/Qwen2.5-Coder-7B-Instruct:nscale"
+    hf_max_new_tokens: int = 1400
 
     openai_api_key: str = ""
     openai_model: str = "gpt-5-mini"
     ollama_base_url: str = "http://ollama:11434"
-    ollama_model: str = "deepseek-coder:6.7b"
+    ollama_model: str = "deepseek-coder:1.3b"
 
     redis_url: str = "redis://redis:6379/0"
     use_queue: bool = True

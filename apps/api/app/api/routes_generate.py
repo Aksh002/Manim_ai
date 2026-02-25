@@ -16,7 +16,9 @@ def generate(
     llm_service: LLMService = Depends(get_llm_service),
     cache_service: CacheService = Depends(get_cache_service),
 ):
-    request_hash = cache_service.hash_text(payload.model_dump_json())
+    request_hash = cache_service.hash_text(
+        f"gen:v3:{llm_service.provider}:{llm_service.model_name}:{payload.model_dump_json()}"
+    )
     cached_code = cache_service.get_generation(request_hash)
     if cached_code:
         return GenerateResponse(
@@ -33,7 +35,7 @@ def generate(
     validation = validator.validate(code)
     if not validation.ok:
         warnings.extend(validation.errors)
-    else:
+    elif not warnings:
         cache_service.set_generation(request_hash, code)
 
     return GenerateResponse(code=code, model=llm_service.model_name, warnings=warnings)
