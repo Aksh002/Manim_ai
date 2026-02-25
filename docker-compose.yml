@@ -1,0 +1,75 @@
+services:
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      NEXT_PUBLIC_API_BASE: http://localhost:${API_PORT:-8000}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    volumes:
+      - ./apps/api:/app
+      - videos_data:${VIDEO_STORAGE_ROOT:-/data/videos}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    command: python -m app.workers.rq_worker
+    env_file:
+      - .env
+    volumes:
+      - ./apps/api:/app
+      - videos_data:${VIDEO_STORAGE_ROOT:-/data/videos}
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c", "sleep 5 && ollama pull ${OLLAMA_MODEL:-deepseek-coder:1.3b}"]
+    profiles:
+      - setup
+
+  renderer-image:
+    build:
+      context: .
+      dockerfile: containers/renderer/Dockerfile
+    image: manim-ai-renderer:latest
+    profiles:
+      - build-only
+
+volumes:
+  videos_data:
+  ollama_data:
